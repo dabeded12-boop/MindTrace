@@ -15,9 +15,7 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 let modelId = null;
 
 async function getModel() {
-  if (modelId) {
-    return modelId;
-  }
+  if (modelId) return modelId;
 
   console.log("Loading QVAC local model...");
 
@@ -33,6 +31,74 @@ async function getModel() {
   console.log("QVAC model loaded.");
 
   return modelId;
+}
+
+function normalizeList(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter(item => typeof item === "string")
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function cleanAnalysis(data) {
+  const result = {
+    goal:
+      typeof data.goal === "string"
+        ? data.goal.trim()
+        : "",
+
+    skills: normalizeList(data.skills),
+    constraints: normalizeList(data.constraints),
+    blockers: normalizeList(data.blockers),
+    opportunities: normalizeList(data.opportunities)
+  };
+
+  // Words and phrases that usually indicate facts/constraints
+  // rather than genuine opportunities.
+  const constraintPatterns = [
+    /\$\s?\d+/i,
+    /\d+\s*(hours?|hrs?|minutes?|days?|weeks?|months?)/i,
+    /\bavailable\b/i,
+    /\bbudget\b/i,
+    /\blimited\b/i,
+    /\btime\b/i
+  ];
+
+  // Remove opportunities that are actually constraints.
+  result.opportunities = result.opportunities.filter(item => {
+    return !constraintPatterns.some(pattern =>
+      pattern.test(item)
+    );
+  });
+
+  // Remove opportunities that simply repeat skills.
+  result.opportunities = result.opportunities.filter(item => {
+    return !result.skills.some(skill =>
+      item.toLowerCase() === skill.toLowerCase()
+    );
+  });
+
+  // Remove duplicate items inside each category.
+  for (const key of [
+    "skills",
+    "constraints",
+    "blockers",
+    "opportunities"
+  ]) {
+    result[key] = [
+      ...new Map(
+        result[key].map(item => [
+          item.toLowerCase(),
+          item
+        ])
+      ).values()
+    ];
+  }
+
+  return result;
 }
 
 async function analyzeThought(thought) {
@@ -53,47 +119,55 @@ Use exactly this structure:
   "opportunities": []
 }
 
-RULES:
+DEFINITIONS:
 
 GOAL:
-Identify the main thing the user wants to accomplish.
-Keep it short and specific.
+The main thing the user wants to accomplish.
 
 SKILLS:
-Include only abilities, knowledge, experience, or resources
-the user explicitly mentions.
-Never invent skills.
+Abilities, knowledge, experience, or resources the user explicitly mentions.
 
 CONSTRAINTS:
-Include real limitations such as money, time, equipment,
-experience, tools, or other resources.
-Do not simply repeat ordinary facts.
+Limits such as money, time, equipment, tools, location, or resources.
 
 BLOCKERS:
-Identify specific problems that could prevent the user
-from reaching the goal.
-Only include blockers supported by the user's thought.
-If none are known, return an empty array.
+Specific problems that could prevent the user from reaching the goal.
 
 OPPORTUNITIES:
-Identify realistic, useful, actionable possibilities
+Specific actions, strategies, markets, ideas, or possibilities
 that could help the user reach the goal.
-Do NOT repeat skills, constraints, or facts.
+
+IMPORTANT:
+
+"$500" is a constraint, NOT an opportunity.
+
+"3 hours per day" is a constraint, NOT an opportunity.
+
+"Video editing" is a skill, NOT an opportunity.
+
+An opportunity should describe something useful that the user
+could potentially DO or pursue.
 
 For example:
-"$500 available" is a constraint.
-"3 hours per day" is a constraint.
-"Video editing" is a skill.
-"Offer short-form video editing to small businesses"
-is an opportunity.
 
-GENERAL RULES:
-- Do not invent personal information.
-- Keep every item short and specific.
-- Use empty arrays when information is unknown.
-- Return ONLY JSON.
-- Do not use markdown.
-- Do not include explanations outside the JSON.
+"Offer short-form video editing to small businesses"
+
+"Target local businesses that need social media videos"
+
+"Start with freelance projects requiring little upfront cost"
+
+Do not invent personal information.
+
+Only use information supported by the user's thought.
+
+Keep every item short and specific.
+
+If there is not enough information for a category,
+return an empty array.
+
+Return ONLY JSON.
+Do not use markdown.
+Do not include explanations.
 
 User thought:
 ${thought}
@@ -119,8 +193,8 @@ ${thought}
   return output.trim();
 }
 
-function cleanJson(text) {
-  let cleaned = text
+function extractJson(text) {
+  const cleaned = text
     .replace(/```json/gi, "")
     .replace(/```/g, "")
     .trim();
@@ -128,11 +202,11 @@ function cleanJson(text) {
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
 
-  if (firstBrace !== -1 && lastBrace !== -1) {
-    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  if (firstBrace === -1 || lastBrace === -1) {
+    throw new Error("QVAC did not return valid JSON.");
   }
 
-  return cleaned;
+  return cleaned.slice(firstBrace, lastBrace + 1);
 }
 
 const mimeTypes = {
@@ -150,10 +224,10 @@ const server = http.createServer(async (req, res) => {
         body += chunk;
       }
 
-      let parsedBody;
+      let parsed;
 
       try {
-        parsedBody = JSON.parse(body || "{}");
+        parsed = JSON.parse(body || "{}");
       } catch {
         res.writeHead(400, {
           "Content-Type": "application/json"
@@ -166,7 +240,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const thought = parsedBody.thought;
+      const thought = parsed.thought;
 
       if (!thought || thought.trim().length < 3) {
         res.writeHead(400, {
@@ -186,47 +260,38 @@ const server = http.createServer(async (req, res) => {
         thought.trim().slice(0, 3000)
       );
 
-      const cleanedResult = cleanJson(rawResult);
+      const json = extractJson(rawResult);
+      const aiResult = JSON.parse(json);
 
-      // Verify that QVAC actually returned valid JSON.
-      try {
-        JSON.parse(cleanedResult);
-      } catch {
-        console.error("QVAC returned invalid JSON:");
-        console.error(rawResult);
-
-        res.writeHead(500, {
-          "Content-Type": "application/json"
-        });
-
-        res.end(JSON.stringify({
-          error: "QVAC returned an invalid analysis. Please try again."
-        }));
-
-        return;
-      }
+      const finalResult = cleanAnalysis(aiResult);
 
       res.writeHead(200, {
         "Content-Type": "application/json"
       });
 
       res.end(JSON.stringify({
-        result: cleanedResult
+        result: JSON.stringify(finalResult)
       }));
 
       return;
     }
 
     if (req.method === "GET") {
-      const requestedPath =
-        req.url === "/" ? "/index.html" : req.url;
+
+  if (req.url === "/favicon.ico") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const requestedPath =
+    req.url === "/" ? "/index.html" : req.url;
 
       const safePath = requestedPath
         .replace(/\.\./g, "")
         .replace(/^\/+/, "");
 
       const filePath = join(root, safePath);
-
       const file = await readFile(filePath);
 
       const type =
