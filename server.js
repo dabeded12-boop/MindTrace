@@ -10,13 +10,14 @@ import {
 } from "@qvac/sdk";
 
 const PORT = 3000;
-
 const root = fileURLToPath(new URL(".", import.meta.url));
 
 let modelId = null;
 
 async function getModel() {
-  if (modelId) return modelId;
+  if (modelId) {
+    return modelId;
+  }
 
   console.log("Loading QVAC local model...");
 
@@ -45,16 +46,54 @@ Analyze the user's thought and return ONLY valid JSON.
 Use exactly this structure:
 
 {
-  "goal": "main goal",
-  "skills": ["skill 1", "skill 2"],
-  "constraints": ["constraint 1", "constraint 2"],
-  "blockers": ["blocker 1", "blocker 2"],
-  "opportunities": ["opportunity 1", "opportunity 2"]
+  "goal": "one clear main goal",
+  "skills": [],
+  "constraints": [],
+  "blockers": [],
+  "opportunities": []
 }
 
-Keep each item short and specific.
-Do not invent personal information.
-If something is unknown, use an empty array.
+RULES:
+
+GOAL:
+Identify the main thing the user wants to accomplish.
+Keep it short and specific.
+
+SKILLS:
+Include only abilities, knowledge, experience, or resources
+the user explicitly mentions.
+Never invent skills.
+
+CONSTRAINTS:
+Include real limitations such as money, time, equipment,
+experience, tools, or other resources.
+Do not simply repeat ordinary facts.
+
+BLOCKERS:
+Identify specific problems that could prevent the user
+from reaching the goal.
+Only include blockers supported by the user's thought.
+If none are known, return an empty array.
+
+OPPORTUNITIES:
+Identify realistic, useful, actionable possibilities
+that could help the user reach the goal.
+Do NOT repeat skills, constraints, or facts.
+
+For example:
+"$500 available" is a constraint.
+"3 hours per day" is a constraint.
+"Video editing" is a skill.
+"Offer short-form video editing to small businesses"
+is an opportunity.
+
+GENERAL RULES:
+- Do not invent personal information.
+- Keep every item short and specific.
+- Use empty arrays when information is unknown.
+- Return ONLY JSON.
+- Do not use markdown.
+- Do not include explanations outside the JSON.
 
 User thought:
 ${thought}
@@ -80,6 +119,22 @@ ${thought}
   return output.trim();
 }
 
+function cleanJson(text) {
+  let cleaned = text
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  }
+
+  return cleaned;
+}
+
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -95,7 +150,23 @@ const server = http.createServer(async (req, res) => {
         body += chunk;
       }
 
-      const { thought } = JSON.parse(body || "{}");
+      let parsedBody;
+
+      try {
+        parsedBody = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400, {
+          "Content-Type": "application/json"
+        });
+
+        res.end(JSON.stringify({
+          error: "Invalid request."
+        }));
+
+        return;
+      }
+
+      const thought = parsedBody.thought;
 
       if (!thought || thought.trim().length < 3) {
         res.writeHead(400, {
@@ -111,16 +182,36 @@ const server = http.createServer(async (req, res) => {
 
       console.log("Analyzing thought with QVAC...");
 
-      const result = await analyzeThought(
+      const rawResult = await analyzeThought(
         thought.trim().slice(0, 3000)
       );
+
+      const cleanedResult = cleanJson(rawResult);
+
+      // Verify that QVAC actually returned valid JSON.
+      try {
+        JSON.parse(cleanedResult);
+      } catch {
+        console.error("QVAC returned invalid JSON:");
+        console.error(rawResult);
+
+        res.writeHead(500, {
+          "Content-Type": "application/json"
+        });
+
+        res.end(JSON.stringify({
+          error: "QVAC returned an invalid analysis. Please try again."
+        }));
+
+        return;
+      }
 
       res.writeHead(200, {
         "Content-Type": "application/json"
       });
 
       res.end(JSON.stringify({
-        result
+        result: cleanedResult
       }));
 
       return;
@@ -155,7 +246,7 @@ const server = http.createServer(async (req, res) => {
     res.end("Not found");
 
   } catch (error) {
-    console.error(error);
+    console.error("Server error:", error);
 
     res.writeHead(500, {
       "Content-Type": "application/json"
