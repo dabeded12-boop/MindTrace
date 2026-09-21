@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MindTrace — See How Your Thoughts Connect</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #080b12;
+      color: #f4f7fb;
+      min-height: 100vh;
+    }
+
+    .app {
+      max-width: 1100px;
+      margin: auto;
+      padding: 40px 24px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 7px 12px;
+      border: 1px solid #303846;
+      border-radius: 999px;
+      color: #8fe3b0;
+      font-size: 12px;
+      letter-spacing: 1px;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-size: 52px;
+      margin: 0;
+      letter-spacing: -2px;
+    }
+
+    .subtitle {
+      color: #9da7b5;
+      max-width: 650px;
+      line-height: 1.6;
+      font-size: 17px;
+      margin: 15px 0 30px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 150px;
+      resize: vertical;
+      background: #10151f;
+      border: 1px solid #2a3240;
+      border-radius: 18px;
+      color: white;
+      padding: 20px;
+      font-size: 16px;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: #8fe3b0;
+    }
+
+    button {
+      margin-top: 14px;
+      padding: 13px 22px;
+      border: 0;
+      border-radius: 12px;
+      background: #8fe3b0;
+      color: #07100b;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: wait;
+    }
+
+    .status {
+      margin-top: 18px;
+      color: #8d98a8;
+      font-size: 14px;
+    }
+
+    .map {
+      margin-top: 35px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .card {
+      background: #10151f;
+      border: 1px solid #252d3a;
+      border-radius: 18px;
+      padding: 22px;
+      min-height: 140px;
+    }
+
+    .card h2 {
+      font-size: 13px;
+      letter-spacing: 1.5px;
+      margin: 0 0 15px;
+      color: #8fe3b0;
+    }
+
+    .card p,
+    .card li {
+      color: #c7ced8;
+      line-height: 1.6;
+    }
+
+    .card ul {
+      padding-left: 20px;
+      margin-bottom: 0;
+    }
+
+    .goal {
+      grid-column: span 2;
+      border-color: #40534a;
+    }
+
+    .empty {
+      color: #697384;
+      font-style: italic;
+    }
+
+    @media (max-width: 700px) {
+      h1 {
+        font-size: 40px;
+      }
+
+      .map {
+        grid-template-columns: 1fr;
+      }
+
+      .goal {
+        grid-column: span 1;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <main class="app">
+
+    <div class="badge">MINDTRACE • LOCAL AI</div>
+
+    <h1>See how your thoughts connect.</h1>
+
+    <p class="subtitle">
+      Put a messy thought, problem, or idea into MindTrace.
+      QVAC analyzes it locally and turns it into a structured map of goals,
+      skills, constraints, blockers, and opportunities.
+    </p>
+
+    <textarea
+      id="thought"
+      placeholder="Example: I want to start a business but I don't know what to sell. I have $500, I'm good at editing videos, and I have 3 hours a day."
+    ></textarea>
+
+    <button id="analyze">Analyze with QVAC</button>
+
+    <div class="status" id="status">
+      ● Ready — analysis runs locally on this device.
+    </div>
+
+    <section class="map">
+
+      <div class="card goal">
+        <h2>GOAL</h2>
+        <p id="goal" class="empty">Your main goal will appear here.</p>
+      </div>
+
+      <div class="card">
+        <h2>SKILLS</h2>
+        <ul id="skills">
+          <li class="empty">Waiting for analysis...</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>CONSTRAINTS</h2>
+        <ul id="constraints">
+          <li class="empty">Waiting for analysis...</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>BLOCKERS</h2>
+        <ul id="blockers">
+          <li class="empty">Waiting for analysis...</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>OPPORTUNITIES</h2>
+        <ul id="opportunities">
+          <li class="empty">Waiting for analysis...</li>
+        </ul>
+      </div>
+
+    </section>
+
+  </main>
+
+  <script>
+    const thought = document.getElementById("thought");
+    const analyze = document.getElementById("analyze");
+    const status = document.getElementById("status");
+
+    function showList(id, items) {
+      const element = document.getElementById(id);
+
+      element.innerHTML = "";
+
+      if (!Array.isArray(items) || items.length === 0) {
+        const li = document.createElement("li");
+        li.className = "empty";
+        li.textContent = "Nothing identified.";
+        element.appendChild(li);
+        return;
+      }
+
+      items.forEach(item => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        element.appendChild(li);
+      });
+    }
+
+    analyze.addEventListener("click", async () => {
+      const value = thought.value.trim();
+
+      if (!value) {
+        status.textContent = "Please enter a thought first.";
+        return;
+      }
+
+      analyze.disabled = true;
+      status.textContent = "● QVAC is analyzing your thought locally...";
+
+      try {
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            thought: value
+          })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Analysis failed.");
+        }
+
+        let result;
+
+        try {
+          result = JSON.parse(data.result);
+        } catch {
+          const cleaned = data.result
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim();
+
+          result = JSON.parse(cleaned);
+        }
+
+        document.getElementById("goal").textContent =
+          result.goal || "No goal identified.";
+
+        showList("skills", result.skills);
+        showList("constraints", result.constraints);
+        showList("blockers", result.blockers);
+        showList("opportunities", result.opportunities);
+
+        status.textContent =
+          "● Analysis complete — generated locally with QVAC.";
+
+      } catch (error) {
+        console.error(error);
+
+        status.textContent =
+          "⚠ " + error.message;
+
+      } finally {
+        analyze.disabled = false;
+      }
+    });
+  </script>
+
+</body>
+</html>
